@@ -15,9 +15,156 @@ permissions:
   contents: read
 
 jobs:
+  app-env-backend:
+    name: App env (backend ← GitHub environment and-dev)
+    runs-on: ubuntu-latest
+    environment: "and-dev"
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      changed: ${{ steps.write.outputs.changed }}
+    steps:
+      - name: Configure AWS credentials (OIDC — no stored secrets)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::167313940749:role/gha-manov7723-sys-full-python-full-python-backend
+          aws-region: us-east-1
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure cluster access (keyless)
+        run: aws eks update-kubeconfig --name "teams-dev" --region us-east-1
+
+      - name: Write GitHub environment values to Secret app-env-backend
+        id: write
+        # Values reach the step only through env: — GitHub masks secrets in
+        # logs and expands them nowhere else. The DDA_V_ prefix keeps an app
+        # setting called PATH or HOME from breaking the shell below.
+        env:
+          DDA_V_BACKEND_CORS_ORIGINS: ${{ vars.BACKEND_CORS_ORIGINS }}
+          DDA_V_EMAILS_FROM_EMAIL: ${{ vars.EMAILS_FROM_EMAIL }}
+          DDA_V_ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+          DDA_V_FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
+          DDA_V_FIRST_SUPERUSER_PASSWORD: ${{ vars.FIRST_SUPERUSER_PASSWORD }}
+          DDA_V_FRONTEND_HOST: ${{ vars.FRONTEND_HOST }}
+          DDA_V_POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          DDA_V_PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          DDA_V_SECRET_KEY: ${{ vars.SECRET_KEY }}
+          DDA_V_SMTP_HOST: ${{ vars.SMTP_HOST }}
+          DDA_V_SMTP_PASSWORD: ${{ vars.SMTP_PASSWORD }}
+          DDA_V_SMTP_PORT: ${{ vars.SMTP_PORT }}
+          DDA_V_SMTP_SSL: ${{ vars.SMTP_SSL }}
+          DDA_V_SMTP_TLS: ${{ vars.SMTP_TLS }}
+          DDA_V_SMTP_USER: ${{ vars.SMTP_USER }}
+          DDA_V_STACK_NAME: ${{ vars.STACK_NAME }}
+        run: |
+          set -euo pipefail
+          kubectl get namespace "and" >/dev/null 2>&1 || kubectl create namespace "and"
+          # Fingerprint the Secret before and after. The deploy job restarts
+          # this service when an EXISTING Secret changed; one this job creates
+          # belongs to a first deploy, whose pods read it as they start.
+          fp() { local d; d=$(kubectl -n and get secret app-env-backend -o jsonpath='{.data}' 2>/dev/null) || return 0; printf '%s' "$d" | sha256sum | cut -c1-16; }
+          BEFORE=$(fp)
+          ARGS=()
+          for NAME in BACKEND_CORS_ORIGINS EMAILS_FROM_EMAIL ENVIRONMENT FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD FRONTEND_HOST POSTGRES_DB PROJECT_NAME SECRET_KEY SMTP_HOST SMTP_PASSWORD SMTP_PORT SMTP_SSL SMTP_TLS SMTP_USER STACK_NAME; do
+            SRC="DDA_V_$NAME"
+            VAL="${!SRC:-}"
+            # A value pasted with a Windows line ending reaches the pod as
+            # "x\r\n", and the app rejects its own valid setting.
+            VAL="${VAL//$'\r'/}"; VAL="${VAL%%$'\n'}"
+            if [ -n "$VAL" ]; then
+              ARGS+=("--from-literal=$NAME=$VAL")
+            else
+              echo "::warning::$NAME is not set in GitHub environment 'and-dev' — the backend pod will not see it."
+            fi
+          done
+          if [ ${#ARGS[@]} -gt 0 ]; then
+            DOC=$(kubectl -n and create secret generic app-env-backend "${ARGS[@]}" --dry-run=client -o json)
+            if kubectl -n and get secret app-env-backend >/dev/null 2>&1; then
+              kubectl -n and patch secret app-env-backend --type merge -p "$DOC"
+            else
+              printf '%s' "$DOC" | kubectl -n and create -f -
+            fi
+          fi
+          if [ -n "$BEFORE" ] && [ "$(fp)" != "$BEFORE" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+
+  app-env-frontend:
+    name: App env (frontend ← GitHub environment and-dev)
+    runs-on: ubuntu-latest
+    environment: "and-dev"
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      changed: ${{ steps.write.outputs.changed }}
+    steps:
+      - name: Configure AWS credentials (OIDC — no stored secrets)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::167313940749:role/gha-manov7723-sys-full-python-full-python-backend
+          aws-region: us-east-1
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure cluster access (keyless)
+        run: aws eks update-kubeconfig --name "teams-dev" --region us-east-1
+
+      - name: Write GitHub environment values to Secret app-env-frontend
+        id: write
+        # Values reach the step only through env: — GitHub masks secrets in
+        # logs and expands them nowhere else. The DDA_V_ prefix keeps an app
+        # setting called PATH or HOME from breaking the shell below.
+        env:
+          DDA_V_BACKEND_CORS_ORIGINS: ${{ vars.BACKEND_CORS_ORIGINS }}
+          DDA_V_EMAILS_FROM_EMAIL: ${{ vars.EMAILS_FROM_EMAIL }}
+          DDA_V_ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+          DDA_V_FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
+          DDA_V_FIRST_SUPERUSER_PASSWORD: ${{ vars.FIRST_SUPERUSER_PASSWORD }}
+          DDA_V_FRONTEND_HOST: ${{ vars.FRONTEND_HOST }}
+          DDA_V_POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          DDA_V_PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          DDA_V_SECRET_KEY: ${{ vars.SECRET_KEY }}
+          DDA_V_SMTP_HOST: ${{ vars.SMTP_HOST }}
+          DDA_V_SMTP_PASSWORD: ${{ vars.SMTP_PASSWORD }}
+          DDA_V_SMTP_PORT: ${{ vars.SMTP_PORT }}
+          DDA_V_SMTP_SSL: ${{ vars.SMTP_SSL }}
+          DDA_V_SMTP_TLS: ${{ vars.SMTP_TLS }}
+          DDA_V_SMTP_USER: ${{ vars.SMTP_USER }}
+          DDA_V_STACK_NAME: ${{ vars.STACK_NAME }}
+        run: |
+          set -euo pipefail
+          kubectl get namespace "and" >/dev/null 2>&1 || kubectl create namespace "and"
+          # Fingerprint the Secret before and after. The deploy job restarts
+          # this service when an EXISTING Secret changed; one this job creates
+          # belongs to a first deploy, whose pods read it as they start.
+          fp() { local d; d=$(kubectl -n and get secret app-env-frontend -o jsonpath='{.data}' 2>/dev/null) || return 0; printf '%s' "$d" | sha256sum | cut -c1-16; }
+          BEFORE=$(fp)
+          ARGS=()
+          for NAME in BACKEND_CORS_ORIGINS EMAILS_FROM_EMAIL ENVIRONMENT FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD FRONTEND_HOST POSTGRES_DB PROJECT_NAME SECRET_KEY SMTP_HOST SMTP_PASSWORD SMTP_PORT SMTP_SSL SMTP_TLS SMTP_USER STACK_NAME; do
+            SRC="DDA_V_$NAME"
+            VAL="${!SRC:-}"
+            # A value pasted with a Windows line ending reaches the pod as
+            # "x\r\n", and the app rejects its own valid setting.
+            VAL="${VAL//$'\r'/}"; VAL="${VAL%%$'\n'}"
+            if [ -n "$VAL" ]; then
+              ARGS+=("--from-literal=$NAME=$VAL")
+            else
+              echo "::warning::$NAME is not set in GitHub environment 'and-dev' — the frontend pod will not see it."
+            fi
+          done
+          if [ ${#ARGS[@]} -gt 0 ]; then
+            DOC=$(kubectl -n and create secret generic app-env-frontend "${ARGS[@]}" --dry-run=client -o json)
+            if kubectl -n and get secret app-env-frontend >/dev/null 2>&1; then
+              kubectl -n and patch secret app-env-frontend --type merge -p "$DOC"
+            else
+              printf '%s' "$DOC" | kubectl -n and create -f -
+            fi
+          fi
+          if [ -n "$BEFORE" ] && [ "$(fp)" != "$BEFORE" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+
   deploy:
     name: Deploy all services
     runs-on: ubuntu-latest
+    needs: [app-env-backend, app-env-frontend]
 
     # dda:release-gate
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
@@ -144,14 +291,14 @@ jobs:
             kubectl apply -n and "$@"
           fi
 
-      - name: Restart backend rollout (manual dispatch — image tag unchanged)
+      - name: Restart backend rollout (manual dispatch, or its configuration changed)
         id: restart_backend
         # On workflow_run the pinned apply above already changed the image, which
         # starts the rollout by itself; restarting as well would add a second,
         # identical revision to the history for every deploy. Only a manual
         # dispatch re-applies the same `:latest` tag and needs a forced restart
         # to pull whatever that tag now points at.
-        if: ${{ github.event_name != 'workflow_run' }}
+        if: ${{ github.event_name != 'workflow_run' || needs['app-env-backend'].outputs.changed == 'true' }}
         run: kubectl rollout restart deployment/full-python-backend -n and
 
       - name: Wait for backend rollout
@@ -292,14 +439,14 @@ jobs:
             kubectl apply -n and "$@"
           fi
 
-      - name: Restart frontend rollout (manual dispatch — image tag unchanged)
+      - name: Restart frontend rollout (manual dispatch, or its configuration changed)
         id: restart_frontend
         # On workflow_run the pinned apply above already changed the image, which
         # starts the rollout by itself; restarting as well would add a second,
         # identical revision to the history for every deploy. Only a manual
         # dispatch re-applies the same `:latest` tag and needs a forced restart
         # to pull whatever that tag now points at.
-        if: ${{ github.event_name != 'workflow_run' }}
+        if: ${{ github.event_name != 'workflow_run' || needs['app-env-frontend'].outputs.changed == 'true' }}
         run: kubectl rollout restart deployment/full-python-frontend -n and
 
       - name: Wait for frontend rollout
